@@ -111,11 +111,46 @@ docker run -d \
   semantic-scholar-mcp
 ```
 
-### Railway
+### Railway Deployment
 
-1. Connect your GitHub repository to Railway
-2. Set environment variables in Railway dashboard
-3. Deploy - Railway will automatically build and start
+**One-click deploy:**
+
+[![Deploy on Railway](https://railway.app/button.svg)](https://railway.app/new?template=https://github.com/truaxki/semantic-scholar-mcp)
+
+**Manual deployment:**
+
+1. **Connect repository**
+   - Go to [Railway](https://railway.app) and sign in
+   - Click "New Project" → "Deploy from GitHub repo"
+   - Select `truaxki/semantic-scholar-mcp`
+
+2. **Configure environment variables**
+   - In Railway dashboard, go to your service's "Variables" tab
+   - Add:
+     ```
+     SEMANTIC_SCHOLAR_API_KEY=your-api-key-here
+     LOG_LEVEL=info
+     PORT=3000
+     ```
+
+3. **Deploy**
+   - Railway automatically detects Node.js and builds
+   - Deploys with Streamable HTTP on port 3000
+   - Gets free HTTPS endpoint automatically
+
+4. **Connect from Claude Code**
+   ```json
+   {
+     "mcpServers": {
+       "semantic-scholar": {
+         "type": "streamable-http",
+         "url": "https://your-service.up.railway.app/mcp"
+       }
+     }
+   }
+   ```
+
+**Railway pricing:** Free tier available, $5/month for dedicated resources.
 
 ### Manual Server (srv1338041)
 
