@@ -7,22 +7,20 @@ services:
       dockerfile: Dockerfile
     container_name: semantic-scholar-mcp
     ports:
-      - "3000:3000"
+      - "${PORT:-3100}:${PORT:-3100}"
     environment:
       - NODE_ENV=production
-      - PORT=3000
+      - PORT=${PORT:-3100}
       - HOST=0.0.0.0
       - SEMANTIC_SCHOLAR_API_KEY=${SEMANTIC_SCHOLAR_API_KEY:-}
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - CACHE_TTL_DAYS=${CACHE_TTL_DAYS:-7}
-      - CACHE_MAX_SIZE=${CACHE_MAX_SIZE:-1073741824}
-      - RATE_LIMIT_REQUESTS_PER_MINUTE=${RATE_LIMIT_REQUESTS_PER_MINUTE:-10}
-      - RATE_LIMIT_BURST_SIZE=${RATE_LIMIT_BURST_SIZE:-5}
+      # Rate limiting and cache size limits planned for Phase 3
     volumes:
       - semantic-scholar-cache:/app/cache
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/health"]
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3100/health"]
       interval: 30s
       timeout: 10s
       retries: 3

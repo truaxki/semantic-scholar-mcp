@@ -21,19 +21,19 @@ COPY package*.json ./
 RUN npm ci --only=production
 
 # Copy built files
-COPY --from=builder /app/build ./build
+COPY --from=builder /app/dist ./dist
 
 # Create cache directory
 RUN mkdir -p /app/cache
 
 # Environment variables
 ENV NODE_ENV=production
-ENV PORT=3000
+ENV PORT=3100
 ENV HOST=0.0.0.0
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
 
 # Run as non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -42,6 +42,6 @@ RUN addgroup -g 1001 -S nodejs && \
 
 USER nodejs
 
-EXPOSE 3000
+EXPOSE ${PORT}
 
-CMD ["node", "build/index.js"]
+CMD ["node", "dist/server.js"]

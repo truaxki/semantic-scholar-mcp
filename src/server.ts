@@ -21,7 +21,7 @@ function isInitializeRequest(body: unknown): boolean {
   );
 }
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
+const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3100;
 const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
 const API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY || '';
 
@@ -307,6 +307,7 @@ app.listen(PORT, () => {
    MCP:     ${SERVER_URL}/mcp (POST/GET/DELETE)
    Health:  ${SERVER_URL}/health
    OAuth:   ${SERVER_URL}/.well-known/oauth-authorization-server
+${!process.env.SUPABASE_URL ? '\n   ⚠️  AUTH DISABLED: Set SUPABASE_URL to enable OAuth 2.1' : ''}
   `);
 });
 

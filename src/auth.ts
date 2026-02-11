@@ -64,12 +64,18 @@ export const tokenVerifier = {
 /**
  * Bearer auth middleware for protecting MCP endpoints
  */
+let authDisabledWarningShown = false;
+
 export function requireBearerAuth(options?: {
   requiredScopes?: string[];
 }): RequestHandler {
   return async (req, res, next) => {
-    // Skip auth if Supabase not configured (API key mode)
+    // Skip auth if Supabase not configured (unauthenticated mode)
     if (!supabase) {
+      if (!authDisabledWarningShown) {
+        console.warn('⚠️  Auth disabled: SUPABASE_URL not configured. All requests are unauthenticated.');
+        authDisabledWarningShown = true;
+      }
       next();
       return;
     }
