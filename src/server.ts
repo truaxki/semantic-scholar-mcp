@@ -58,13 +58,12 @@ function consentPage(authorizationId: string, supabaseUrl: string, supabaseAnonK
 </div>
 <script>
 const AUTHORIZATION_ID = '${authorizationId}';
-const sb = window.supabase || window.Supabase;
-const supabase = sb.createClient('${supabaseUrl}', '${supabaseAnonKey}');
+const _sb = (window.supabase || window.Supabase).createClient('${supabaseUrl}', '${supabaseAnonKey}');
 const app = document.getElementById('app');
 
 async function init() {
   // Check if user is logged in
-  const { data: { user } } = await supabase.auth.getUser();
+  const { data: { user } } = await _sb.auth.getUser();
   
   if (!user) {
     showLogin();
@@ -73,7 +72,7 @@ async function init() {
 
   // Get authorization details
   try {
-    const { data: details, error } = await supabase.auth.oauth.getAuthorizationDetails(AUTHORIZATION_ID);
+    const { data: details, error } = await _sb.auth.oauth.getAuthorizationDetails(AUTHORIZATION_ID);
     if (error) {
       app.innerHTML = '<h2>Error</h2><p class="error">' + error.message + '</p>';
       return;
@@ -104,7 +103,7 @@ async function handleLogin(e) {
   const status = document.getElementById('status');
   status.innerHTML = 'Signing in...';
   
-  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  const { error } = await _sb.auth.signInWithPassword({ email, password });
   if (error) {
     status.innerHTML = '<span class="error">' + error.message + '</span>';
     return;
@@ -139,7 +138,7 @@ async function handleApprove() {
   status.innerHTML = 'Approving...';
   
   try {
-    const { data, error } = await supabase.auth.oauth.approveAuthorization(AUTHORIZATION_ID);
+    const { data, error } = await _sb.auth.oauth.approveAuthorization(AUTHORIZATION_ID);
     if (error) {
       status.innerHTML = '<span class="error">' + error.message + '</span>';
       return;
@@ -159,7 +158,7 @@ async function handleDeny() {
   status.innerHTML = 'Denying...';
   
   try {
-    const { data, error } = await supabase.auth.oauth.denyAuthorization(AUTHORIZATION_ID);
+    const { data, error } = await _sb.auth.oauth.denyAuthorization(AUTHORIZATION_ID);
     if (error) {
       status.innerHTML = '<span class="error">' + error.message + '</span>';
       return;
