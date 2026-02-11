@@ -306,7 +306,7 @@ app.get('/health', (_req: Request, res: Response) => {
 // ============================================================
 // Start
 // ============================================================
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 🚀 Semantic Scholar MCP Server at ${SERVER_URL}
 
