@@ -180,21 +180,23 @@ function createServer() {
 const serverHost = new URL(SERVER_URL).host;
 const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
 const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
-const allowedHosts = isRailway
-  ? undefined  // Railway's reverse proxy handles host validation
-  : [
-      'localhost',
-      '127.0.0.1',
-      `localhost:${PORT}`,
-      serverHost,
-      ...(railwayDomain ? [railwayDomain] : []),
-    ];
-console.log('Allowed hosts:', allowedHosts);
 
-const app = createMcpExpressApp({
-  host: '0.0.0.0',
-  allowedHosts,
-});
+let app;
+if (isRailway) {
+  // Railway's reverse proxy handles host validation — skip allowedHosts entirely
+  console.log('Railway detected, skipping host validation');
+  app = createMcpExpressApp({ host: '0.0.0.0' });
+} else {
+  const allowedHosts = [
+    'localhost',
+    '127.0.0.1',
+    `localhost:${PORT}`,
+    serverHost,
+    ...(railwayDomain ? [railwayDomain] : []),
+  ];
+  console.log('Allowed hosts:', allowedHosts);
+  app = createMcpExpressApp({ host: '0.0.0.0', allowedHosts });
+}
 
 // ============================================================
 // OAuth 2.1 Metadata Endpoints
