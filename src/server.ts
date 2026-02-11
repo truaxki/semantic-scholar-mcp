@@ -10,6 +10,7 @@ import { requireBearerAuth, getOAuthMetadata } from './auth.js';
 import { supabaseOAuthEndpoints } from './supabase.js';
 import { searchPapers, getPaper, getAuthors, getCitations, getReferences, batchFetchPapers, getAuthor, searchAuthors, getPaperWithEmbedding, getAuthorWithPapers } from './semantic-scholar.js';
 import { getCachedOrFetch, getCacheStats, clearCache } from './cache.js';
+import { executeReadQuery, isNeo4jConnected, closeDriver } from './neo4j.js';
 
 // Check if request is an MCP initialize request
 function isInitializeRequest(body: unknown): boolean {
@@ -249,6 +250,323 @@ function createServer() {
     }
   );
 
+  // ============================================================
+  // Neo4j Graph Tools (read-only)
+  // ============================================================
+
+  // Tool: read_cypher
+  server.registerTool(
+    'read_cypher',
+    {
+      description: 'Execute a read-only Cypher query against the Neo4j knowledge graph. Write operations are blocked. Returns JSON array of result rows. Graph contains academic papers, authors, fields, and communities from Semantic Scholar.',
+      inputSchema: {
+        query: z.string().describe('Cypher query (read-only). Example: MATCH (a:Author)-[:WROTE]->(p:Paper) WHERE a.name CONTAINS "LeCun" RETURN a.name, p.title LIMIT 10'),
+        params: z.record(z.unknown()).optional().describe('Query parameters (optional). Example: {name: "Yann LeCun"}'),
+      },
+    },
+    async ({ query, params }): Promise<CallToolResult> => {
+      try {
+        const cacheKey = `cypher:${query}:${JSON.stringify(params || {})}`;
+        const raw = await getCachedOrFetch(cacheKey, 300, async () => {
+          const rows = await executeReadQuery(query, params || {});
+          return JSON.stringify(rows);
+        });
+        return { content: [{ type: 'text', text: raw }] };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  // Tool: graph_stats
+  server.registerTool(
+    'graph_stats',
+    {
+      description: 'Get overview statistics of the Neo4j knowledge graph: node counts, relationship counts, community count, embedding coverage.',
+      inputSchema: {},
+    },
+    async (): Promise<CallToolResult> => {
+      try {
+        const cacheKey = 'graph_stats';
+        const raw = await getCachedOrFetch(cacheKey, 3600, async () => {
+          const rows = await executeReadQuery(`
+            MATCH (p:Paper) WITH count(p) AS papers
+            MATCH (a:Author) WITH papers, count(a) AS authors
+            MATCH (f:Field) WITH papers, authors, count(f) AS fields
+            RETURN papers, authors, fields
+          `);
+          const base = rows[0] || { papers: 0, authors: 0, fields: 0 };
+
+          const communityRows = await executeReadQuery(`
+            MATCH (a:Author) WHERE a.community IS NOT NULL
+            RETURN count(DISTINCT a.community) AS communities
+          `);
+          const communities = (communityRows[0]?.communities as number) || 0;
+
+          const embeddingRows = await executeReadQuery(`
+            MATCH (p:Paper) WHERE p.embedding IS NOT NULL
+            RETURN count(p) AS withEmbeddings
+          `);
+          const withEmbeddings = (embeddingRows[0]?.withEmbeddings as number) || 0;
+
+          const wroteRows = await executeReadQuery(`
+            MATCH ()-[r:WROTE]->() RETURN count(r) AS wrote
+          `);
+          const wrote = (wroteRows[0]?.wrote as number) || 0;
+
+          const citesRows = await executeReadQuery(`
+            MATCH ()-[r:CITES]->() RETURN count(r) AS cites
+          `);
+          const cites = (citesRows[0]?.cites as number) || 0;
+
+          return JSON.stringify({
+            papers: base.papers,
+            authors: base.authors,
+            fields: base.fields,
+            communities,
+            embeddings: withEmbeddings,
+            wrote_rels: wrote,
+            cites_rels: cites,
+          });
+        });
+        return { content: [{ type: 'text', text: raw }] };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  // Tool: find_authors
+  server.registerTool(
+    'find_authors',
+    {
+      description: 'Search for authors by name in the Neo4j knowledge graph. Returns author details, community membership, top co-authors, and top papers.',
+      inputSchema: {
+        name: z.string().describe('Author name or partial name to search for'),
+      },
+    },
+    async ({ name }): Promise<CallToolResult> => {
+      try {
+        const rows = await executeReadQuery(`
+          MATCH (a:Author)
+          WHERE toLower(a.name) CONTAINS toLower($name)
+          OPTIONAL MATCH (a)-[:WROTE]->(p:Paper)
+          WITH a, p ORDER BY p.citationCount DESC
+          WITH a, collect(p { .id, .title, .year, .citationCount })[..5] AS topPapers
+          OPTIONAL MATCH (a)-[:WROTE]->(:Paper)<-[:WROTE]-(coauthor:Author)
+          WHERE coauthor <> a
+          WITH a, topPapers, coauthor, count(*) AS collabs
+          ORDER BY collabs DESC
+          WITH a, topPapers, collect(coauthor { .id, .name, .hIndex, collaborations: collabs })[..5] AS topCoauthors
+          RETURN a { .id, .name, .hIndex, .citationCount, .paperCount, .affiliations, .community } AS author,
+                 topPapers,
+                 topCoauthors
+          LIMIT 20
+        `, { name });
+        return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  // Tool: find_communities
+  server.registerTool(
+    'find_communities',
+    {
+      description: 'Explore research communities in the knowledge graph. Search by topic keyword or community ID. Returns community members, field distribution, and key papers.',
+      inputSchema: {
+        topic: z.string().optional().describe('Topic keyword to search for communities (e.g. "machine learning")'),
+        communityId: z.number().optional().describe('Specific community ID number to explore'),
+      },
+    },
+    async ({ topic, communityId }): Promise<CallToolResult> => {
+      try {
+        if (communityId !== undefined) {
+          const rows = await executeReadQuery(`
+            MATCH (a:Author { community: $communityId })-[:WROTE]->(p:Paper)
+            WITH a, p
+            ORDER BY p.citationCount DESC
+            WITH collect(DISTINCT a { .id, .name, .hIndex, .citationCount })[..20] AS members,
+                 collect(DISTINCT p { .id, .title, .year, .citationCount })[..10] AS keyPapers
+            RETURN $communityId AS communityId, members, keyPapers
+          `, { communityId });
+
+          // Get field distribution for this community
+          const fieldRows = await executeReadQuery(`
+            MATCH (a:Author { community: $communityId })-[:WROTE]->(p:Paper)-[:IN_FIELD]->(f:Field)
+            RETURN f.name AS field, count(*) AS count
+            ORDER BY count DESC
+            LIMIT 10
+          `, { communityId });
+
+          const result = rows[0] || { communityId, members: [], keyPapers: [] };
+          return { content: [{ type: 'text', text: JSON.stringify({ ...result, fields: fieldRows }) }] };
+        }
+
+        if (topic) {
+          // Find communities related to a topic via fields and papers
+          const rows = await executeReadQuery(`
+            MATCH (f:Field)
+            WHERE toLower(f.name) CONTAINS toLower($topic)
+            MATCH (p:Paper)-[:IN_FIELD]->(f)
+            MATCH (a:Author)-[:WROTE]->(p)
+            WHERE a.community IS NOT NULL
+            WITH a.community AS communityId, collect(DISTINCT f.name) AS matchedFields,
+                 count(DISTINCT a) AS memberCount, count(DISTINCT p) AS paperCount
+            ORDER BY paperCount DESC
+            LIMIT 10
+            RETURN communityId, matchedFields, memberCount, paperCount
+          `, { topic });
+          return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+        }
+
+        // No input: list all communities
+        const rows = await executeReadQuery(`
+          MATCH (a:Author)
+          WHERE a.community IS NOT NULL
+          WITH a.community AS communityId, count(a) AS memberCount
+          ORDER BY memberCount DESC
+          LIMIT 50
+          RETURN communityId, memberCount
+        `);
+        return { content: [{ type: 'text', text: JSON.stringify(rows) }] };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    }
+  );
+
+  // Tool: hybrid_search
+  server.registerTool(
+    'hybrid_search',
+    {
+      description: 'Sequential search: queries Neo4j knowledge graph first, then Semantic Scholar API, and compares results. Identifies deltas between local graph and live API data. Returns results from both sources with confidence level and suggestions.',
+      inputSchema: {
+        query: z.string().describe('Search query (e.g. author name, paper title, or topic)'),
+        type: z.enum(['paper', 'author', 'topic']).describe('Type of search: paper, author, or topic'),
+      },
+    },
+    async ({ query, type }): Promise<CallToolResult> => {
+      try {
+        let graphResults: unknown[] = [];
+        let apiResults: unknown = null;
+        let graphError: string | null = null;
+        let apiError: string | null = null;
+
+        // Step 1: Query Neo4j graph
+        try {
+          if (type === 'paper') {
+            graphResults = await executeReadQuery(`
+              MATCH (p:Paper)
+              WHERE toLower(p.title) CONTAINS toLower($query)
+              OPTIONAL MATCH (a:Author)-[:WROTE]->(p)
+              WITH p, collect(a.name)[..5] AS authors
+              RETURN p { .id, .title, .year, .citationCount, .abstract } AS paper, authors
+              ORDER BY p.citationCount DESC
+              LIMIT 10
+            `, { query });
+          } else if (type === 'author') {
+            graphResults = await executeReadQuery(`
+              MATCH (a:Author)
+              WHERE toLower(a.name) CONTAINS toLower($query)
+              OPTIONAL MATCH (a)-[:WROTE]->(p:Paper)
+              WITH a, count(p) AS graphPaperCount
+              RETURN a { .id, .name, .hIndex, .citationCount, .paperCount, .community } AS author, graphPaperCount
+              ORDER BY a.citationCount DESC
+              LIMIT 10
+            `, { query });
+          } else {
+            // topic
+            graphResults = await executeReadQuery(`
+              MATCH (f:Field)
+              WHERE toLower(f.name) CONTAINS toLower($query)
+              OPTIONAL MATCH (p:Paper)-[:IN_FIELD]->(f)
+              WITH f, count(p) AS paperCount
+              RETURN f.name AS field, paperCount
+              ORDER BY paperCount DESC
+              LIMIT 10
+            `, { query });
+          }
+        } catch (error) {
+          graphError = error instanceof Error ? error.message : String(error);
+        }
+
+        // Step 2: Query S2 API
+        try {
+          if (type === 'paper') {
+            apiResults = await searchPapers(API_KEY, query, { limit: 10 });
+          } else if (type === 'author') {
+            apiResults = await searchAuthors(API_KEY, query, 10);
+          } else {
+            // For topic, search papers in that field
+            apiResults = await searchPapers(API_KEY, query, { limit: 10 });
+          }
+        } catch (error) {
+          apiError = error instanceof Error ? error.message : String(error);
+        }
+
+        // Step 3: Compute deltas and confidence
+        const hasGraph = graphResults.length > 0;
+        const hasApi = apiResults !== null && !apiError;
+
+        let source: string;
+        let confidence: string;
+        let suggestion: string | null = null;
+        const deltas: string[] = [];
+
+        if (hasGraph && hasApi) {
+          source = 'both';
+          confidence = 'high';
+          // Flag count differences
+          const apiCount = Array.isArray(apiResults) ? apiResults.length :
+            (apiResults as { data?: unknown[] })?.data?.length || 0;
+          if (graphResults.length > 0 && apiCount > 0 && graphResults.length !== apiCount) {
+            deltas.push(`Graph returned ${graphResults.length} results, API returned ${apiCount}. Graph may be a subset.`);
+          }
+        } else if (hasGraph && !hasApi) {
+          source = 'graph';
+          confidence = 'medium';
+          if (apiError) deltas.push(`S2 API error: ${apiError}`);
+          suggestion = 'Results from local graph only. S2 API unavailable — results may be stale.';
+        } else if (!hasGraph && hasApi) {
+          source = 'api';
+          confidence = 'medium';
+          if (graphError) {
+            deltas.push(`Graph error: ${graphError}`);
+          } else {
+            deltas.push('No matching results in local graph.');
+          }
+          suggestion = 'Not yet in the knowledge graph. Consider ingesting these results.';
+        } else {
+          source = 'none';
+          confidence = 'low';
+          if (graphError) deltas.push(`Graph error: ${graphError}`);
+          if (apiError) deltas.push(`API error: ${apiError}`);
+          suggestion = 'No results in graph or S2. Try web search.';
+        }
+
+        const result = {
+          graphResults,
+          apiResults,
+          deltas,
+          source,
+          confidence,
+          suggestion,
+        };
+
+        return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return { content: [{ type: 'text', text: JSON.stringify({ error: msg }) }], isError: true };
+      }
+    }
+  );
+
   return server;
 }
 
@@ -370,12 +688,14 @@ app.delete('/mcp', authMiddleware, async (req: Request, res: Response) => {
 // ============================================================
 // Health check
 // ============================================================
-app.get('/health', (_req: Request, res: Response) => {
+app.get('/health', async (_req: Request, res: Response) => {
+  const neo4jConnected = await isNeo4jConnected();
   res.json({
     status: 'ok',
     timestamp: new Date().toISOString(),
     oauth: !!process.env.SUPABASE_URL,
     apiKey: !!API_KEY,
+    neo4j: neo4jConnected,
   });
 });
 
@@ -399,5 +719,6 @@ process.on('SIGINT', async () => {
     console.log(`Closing session ${sid}`);
     await transport.close();
   }
+  await closeDriver();
   process.exit(0);
 });
