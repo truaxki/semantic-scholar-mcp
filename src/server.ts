@@ -22,6 +22,19 @@ function isInitializeRequest(body: unknown): boolean {
   );
 }
 
+function consentPage(authorizationId: string): string {
+  return `<!DOCTYPE html>
+<html><head><title>Authorize</title><meta name="viewport" content="width=device-width,initial-scale=1"></head>
+<body style="font-family:sans-serif;max-width:480px;margin:4rem auto;text-align:center">
+  <h2>Authorize Semantic Scholar MCP</h2>
+  <p>This application wants to access your account.</p>
+  <form method="POST" action="/oauth/consent">
+    <input type="hidden" name="authorization_id" value="${authorizationId}" />
+    <button type="submit" style="padding:0.75rem 2rem;font-size:1.1rem;cursor:pointer;background:#4f46e5;color:white;border:none;border-radius:8px">Approve</button>
+  </form>
+</body></html>`;
+}
+
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3100;
 const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
 const API_KEY = process.env.SEMANTIC_SCHOLAR_API_KEY || '';
@@ -592,6 +605,10 @@ if (isRailway) {
   app = createMcpExpressApp({ host: '0.0.0.0', allowedHosts });
 }
 
+// Parse URL-encoded form bodies (for OAuth consent POST)
+import express from 'express';
+app.use(express.urlencoded({ extended: true }));
+
 // ============================================================
 // OAuth 2.1 Metadata Endpoints
 // ============================================================
@@ -656,32 +673,63 @@ app.get('/oauth/consent', async (req: Request, res: Response) => {
     }
 
     // Auto-approve didn't produce a redirect — show manual consent page
-    console.warn('[OAuth] Auto-approve did not return redirect, showing consent page');
-    res.status(200).send(`<!DOCTYPE html>
-<html><head><title>Authorize</title></head>
-<body style="font-family:sans-serif;max-width:480px;margin:4rem auto;text-align:center">
-  <h2>Authorize Semantic Scholar MCP</h2>
-  <p>This application wants to access your account.</p>
-  <form method="POST" action="${supabaseUrl}/auth/v1/oauth/authorize">
-    <input type="hidden" name="consent" value="approve" />
-    <input type="hidden" name="authorization_id" value="${authorizationId}" />
-    <button type="submit" style="padding:0.75rem 2rem;font-size:1rem;cursor:pointer">Approve</button>
-  </form>
-</body></html>`);
+    const approveBody = await approveRes.text();
+    console.warn('[OAuth] Auto-approve response:', approveRes.status, approveBody);
+    res.status(200).send(consentPage(authorizationId));
   } catch (err) {
     console.error('[OAuth] Consent auto-approve failed:', err);
-    // Fallback: show manual consent page
-    res.status(200).send(`<!DOCTYPE html>
-<html><head><title>Authorize</title></head>
-<body style="font-family:sans-serif;max-width:480px;margin:4rem auto;text-align:center">
-  <h2>Authorize Semantic Scholar MCP</h2>
-  <p>This application wants to access your account.</p>
-  <form method="POST" action="${supabaseUrl}/auth/v1/oauth/authorize">
-    <input type="hidden" name="consent" value="approve" />
-    <input type="hidden" name="authorization_id" value="${authorizationId}" />
-    <button type="submit" style="padding:0.75rem 2rem;font-size:1rem;cursor:pointer">Approve</button>
-  </form>
-</body></html>`);
+    res.status(200).send(consentPage(authorizationId));
+  }
+});
+
+// POST /oauth/consent — handle the Approve button click server-side
+app.post('/oauth/consent', async (req: Request, res: Response) => {
+  const authorizationId = req.body?.authorization_id as string | undefined;
+
+  if (!authorizationId) {
+    res.status(400).send('Missing authorization_id');
+    return;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    res.status(500).send('Supabase not configured');
+    return;
+  }
+
+  try {
+    const approveRes = await fetch(`${supabaseUrl}/auth/v1/oauth/authorize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({ consent: 'approve', authorization_id: authorizationId }),
+      redirect: 'manual',
+    });
+
+    // Check for redirect
+    if (approveRes.status >= 300 && approveRes.status < 400) {
+      const location = approveRes.headers.get('location');
+      if (location) {
+        res.redirect(location);
+        return;
+      }
+    }
+
+    const data = await approveRes.json() as { redirect_to?: string };
+    if (data.redirect_to) {
+      res.redirect(data.redirect_to);
+      return;
+    }
+
+    console.error('[OAuth] POST consent - no redirect from Supabase:', approveRes.status, JSON.stringify(data));
+    res.status(500).send('Authorization failed - no redirect received from Supabase');
+  } catch (err) {
+    console.error('[OAuth] POST consent failed:', err);
+    res.status(500).send('Authorization failed');
   }
 });
 
