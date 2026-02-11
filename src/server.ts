@@ -609,6 +609,83 @@ app.get('/.well-known/oauth-protected-resource', (_req: Request, res: Response) 
 });
 
 // ============================================================
+// OAuth 2.1 Consent Endpoint
+// ============================================================
+
+app.get('/oauth/consent', async (req: Request, res: Response) => {
+  const authorizationId = req.query.authorization_id as string | undefined;
+
+  if (!authorizationId) {
+    res.status(400).send('Missing authorization_id parameter');
+    return;
+  }
+
+  const supabaseUrl = process.env.SUPABASE_URL;
+  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+
+  if (!supabaseUrl || !supabaseAnonKey) {
+    res.status(500).send('Supabase not configured');
+    return;
+  }
+
+  // Auto-approve: POST consent back to Supabase
+  try {
+    const approveRes = await fetch(`${supabaseUrl}/auth/v1/oauth/authorize`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': supabaseAnonKey,
+      },
+      body: JSON.stringify({ consent: 'approve', authorization_id: authorizationId }),
+      redirect: 'manual',
+    });
+
+    // Supabase returns a redirect_to URL in JSON or via Location header
+    if (approveRes.status >= 300 && approveRes.status < 400) {
+      const location = approveRes.headers.get('location');
+      if (location) {
+        res.redirect(location);
+        return;
+      }
+    }
+
+    const data = await approveRes.json() as { redirect_to?: string };
+    if (data.redirect_to) {
+      res.redirect(data.redirect_to);
+      return;
+    }
+
+    // Auto-approve didn't produce a redirect — show manual consent page
+    console.warn('[OAuth] Auto-approve did not return redirect, showing consent page');
+    res.status(200).send(`<!DOCTYPE html>
+<html><head><title>Authorize</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:4rem auto;text-align:center">
+  <h2>Authorize Semantic Scholar MCP</h2>
+  <p>This application wants to access your account.</p>
+  <form method="POST" action="${supabaseUrl}/auth/v1/oauth/authorize">
+    <input type="hidden" name="consent" value="approve" />
+    <input type="hidden" name="authorization_id" value="${authorizationId}" />
+    <button type="submit" style="padding:0.75rem 2rem;font-size:1rem;cursor:pointer">Approve</button>
+  </form>
+</body></html>`);
+  } catch (err) {
+    console.error('[OAuth] Consent auto-approve failed:', err);
+    // Fallback: show manual consent page
+    res.status(200).send(`<!DOCTYPE html>
+<html><head><title>Authorize</title></head>
+<body style="font-family:sans-serif;max-width:480px;margin:4rem auto;text-align:center">
+  <h2>Authorize Semantic Scholar MCP</h2>
+  <p>This application wants to access your account.</p>
+  <form method="POST" action="${supabaseUrl}/auth/v1/oauth/authorize">
+    <input type="hidden" name="consent" value="approve" />
+    <input type="hidden" name="authorization_id" value="${authorizationId}" />
+    <button type="submit" style="padding:0.75rem 2rem;font-size:1rem;cursor:pointer">Approve</button>
+  </form>
+</body></html>`);
+  }
+});
+
+// ============================================================
 // MCP Endpoints (Protected with Bearer Auth)
 // ============================================================
 
