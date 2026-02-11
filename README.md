@@ -59,6 +59,34 @@ npm start
 npm run dev
 ```
 
+## Authentication
+
+### Simple API Key (Default)
+
+Uses environment variable for authentication. Good for personal use.
+
+```bash
+export SEMANTIC_SCHOLAR_API_KEY="your-api-key"
+```
+
+### OAuth 2.1 (Enterprise)
+
+For production multi-user deployments, use the OAuth 2.1 pattern:
+
+**Reusable OAuth Pattern:** https://github.com/truaxki/mcp-oauth-pattern
+
+The OAuth pattern provides:
+- OAuth 2.1 authentication with Supabase
+- Bearer token middleware
+- Consent page for user authorization
+- Per-user rate limiting (optional)
+
+**To add OAuth to this server:**
+1. Clone https://github.com/truaxki/mcp-oauth-pattern
+2. Copy `src/auth.ts`, `src/logger.ts` from OAuth pattern
+3. Replace API key auth with Bearer token middleware
+4. Configure Supabase environment variables
+
 ### Connect from Claude Code
 
 Add to your `.mcp.json`:
