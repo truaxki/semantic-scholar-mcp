@@ -22,16 +22,159 @@ function isInitializeRequest(body: unknown): boolean {
   );
 }
 
-function consentPage(authorizationId: string): string {
+function consentPage(authorizationId: string, supabaseUrl: string, supabaseAnonKey: string): string {
   return `<!DOCTYPE html>
-<html><head><title>Authorize</title><meta name="viewport" content="width=device-width,initial-scale=1"></head>
-<body style="font-family:sans-serif;max-width:480px;margin:4rem auto;text-align:center">
-  <h2>Authorize Semantic Scholar MCP</h2>
-  <p>This application wants to access your account.</p>
-  <form method="POST" action="/oauth/consent">
-    <input type="hidden" name="authorization_id" value="${authorizationId}" />
-    <button type="submit" style="padding:0.75rem 2rem;font-size:1.1rem;cursor:pointer;background:#4f46e5;color:white;border:none;border-radius:8px">Approve</button>
-  </form>
+<html><head>
+<title>Authorize — AgentLocker Graph</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<script src="https://unpkg.com/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  .card { background: #1e293b; border-radius: 12px; padding: 2rem; max-width: 420px; width: 90%; box-shadow: 0 4px 24px rgba(0,0,0,0.3); }
+  h2 { margin-bottom: 0.5rem; color: #f8fafc; }
+  .subtitle { color: #94a3b8; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  .client-info { background: #0f172a; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; font-size: 0.85rem; }
+  .client-info dt { color: #94a3b8; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; }
+  .client-info dd { color: #e2e8f0; margin-bottom: 0.5rem; }
+  .scopes { list-style: none; display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .scopes li { background: #334155; padding: 0.25rem 0.75rem; border-radius: 999px; font-size: 0.8rem; }
+  .actions { display: flex; gap: 0.75rem; }
+  button { flex: 1; padding: 0.75rem; font-size: 1rem; border: none; border-radius: 8px; cursor: pointer; font-weight: 600; }
+  .approve { background: #4f46e5; color: white; }
+  .approve:hover { background: #4338ca; }
+  .deny { background: #334155; color: #94a3b8; }
+  .deny:hover { background: #475569; }
+  .login-form { display: flex; flex-direction: column; gap: 0.75rem; }
+  input[type=email], input[type=password] { padding: 0.75rem; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #e2e8f0; font-size: 1rem; }
+  .error { color: #f87171; font-size: 0.85rem; margin-top: 0.5rem; }
+  .loading { color: #94a3b8; text-align: center; padding: 2rem; }
+  #status { margin-top: 0.75rem; font-size: 0.85rem; }
+</style>
+</head>
+<body>
+<div class="card" id="app">
+  <div class="loading">Loading...</div>
+</div>
+<script>
+const AUTHORIZATION_ID = '${authorizationId}';
+const supabase = window.supabase.createClient('${supabaseUrl}', '${supabaseAnonKey}');
+const app = document.getElementById('app');
+
+async function init() {
+  // Check if user is logged in
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) {
+    showLogin();
+    return;
+  }
+
+  // Get authorization details
+  try {
+    const { data: details, error } = await supabase.auth.oauth.getAuthorizationDetails(AUTHORIZATION_ID);
+    if (error) {
+      app.innerHTML = '<h2>Error</h2><p class="error">' + error.message + '</p>';
+      return;
+    }
+    showConsent(details, user);
+  } catch (e) {
+    app.innerHTML = '<h2>Error</h2><p class="error">' + e.message + '</p>';
+  }
+}
+
+function showLogin() {
+  app.innerHTML = \`
+    <h2>Sign In</h2>
+    <p class="subtitle">Sign in to authorize this application</p>
+    <form class="login-form" onsubmit="handleLogin(event)">
+      <input type="email" id="email" placeholder="Email" required />
+      <input type="password" id="password" placeholder="Password" required />
+      <button type="submit" class="approve">Sign In</button>
+    </form>
+    <div id="status"></div>
+  \`;
+}
+
+async function handleLogin(e) {
+  e.preventDefault();
+  const email = document.getElementById('email').value;
+  const password = document.getElementById('password').value;
+  const status = document.getElementById('status');
+  status.innerHTML = 'Signing in...';
+  
+  const { error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error) {
+    status.innerHTML = '<span class="error">' + error.message + '</span>';
+    return;
+  }
+  
+  // Logged in, now show consent
+  init();
+}
+
+function showConsent(details, user) {
+  const client = details.client || {};
+  const scopes = (details.scope || '').split(' ').filter(Boolean);
+  
+  app.innerHTML = \`
+    <h2>Authorize Application</h2>
+    <p class="subtitle">Signed in as \${user.email}</p>
+    <dl class="client-info">
+      <dt>Application</dt>
+      <dd>\${client.name || 'Unknown App'}</dd>
+      \${scopes.length ? '<dt>Permissions</dt><dd><ul class="scopes">' + scopes.map(s => '<li>' + s + '</li>').join('') + '</ul></dd>' : ''}
+    </dl>
+    <div class="actions">
+      <button class="deny" onclick="handleDeny()">Deny</button>
+      <button class="approve" onclick="handleApprove()">Approve</button>
+    </div>
+    <div id="status"></div>
+  \`;
+}
+
+async function handleApprove() {
+  const status = document.getElementById('status');
+  status.innerHTML = 'Approving...';
+  
+  try {
+    const { data, error } = await supabase.auth.oauth.approveAuthorization(AUTHORIZATION_ID);
+    if (error) {
+      status.innerHTML = '<span class="error">' + error.message + '</span>';
+      return;
+    }
+    if (data && data.redirect_to) {
+      window.location.href = data.redirect_to;
+    } else {
+      status.innerHTML = '<span class="error">No redirect received</span>';
+    }
+  } catch (e) {
+    status.innerHTML = '<span class="error">' + e.message + '</span>';
+  }
+}
+
+async function handleDeny() {
+  const status = document.getElementById('status');
+  status.innerHTML = 'Denying...';
+  
+  try {
+    const { data, error } = await supabase.auth.oauth.denyAuthorization(AUTHORIZATION_ID);
+    if (error) {
+      status.innerHTML = '<span class="error">' + error.message + '</span>';
+      return;
+    }
+    if (data && data.redirect_to) {
+      window.location.href = data.redirect_to;
+    } else {
+      window.close();
+    }
+  } catch (e) {
+    status.innerHTML = '<span class="error">' + e.message + '</span>';
+  }
+}
+
+init();
+</script>
 </body></html>`;
 }
 
@@ -605,10 +748,6 @@ if (isRailway) {
   app = createMcpExpressApp({ host: '0.0.0.0', allowedHosts });
 }
 
-// Parse URL-encoded form bodies (for OAuth consent POST)
-import express from 'express';
-app.use(express.urlencoded({ extended: true }));
-
 // ============================================================
 // OAuth 2.1 Metadata Endpoints
 // ============================================================
@@ -645,92 +784,8 @@ app.get('/oauth/consent', async (req: Request, res: Response) => {
     return;
   }
 
-  // Auto-approve: POST consent back to Supabase
-  try {
-    const approveRes = await fetch(`${supabaseUrl}/auth/v1/oauth/authorize`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': supabaseAnonKey,
-      },
-      body: JSON.stringify({ consent: 'approve', authorization_id: authorizationId }),
-      redirect: 'manual',
-    });
-
-    // Supabase returns a redirect_to URL in JSON or via Location header
-    if (approveRes.status >= 300 && approveRes.status < 400) {
-      const location = approveRes.headers.get('location');
-      if (location) {
-        res.redirect(location);
-        return;
-      }
-    }
-
-    const data = await approveRes.json() as { redirect_to?: string };
-    if (data.redirect_to) {
-      res.redirect(data.redirect_to);
-      return;
-    }
-
-    // Auto-approve didn't produce a redirect — show manual consent page
-    const approveBody = await approveRes.text();
-    console.warn('[OAuth] Auto-approve response:', approveRes.status, approveBody);
-    res.status(200).send(consentPage(authorizationId));
-  } catch (err) {
-    console.error('[OAuth] Consent auto-approve failed:', err);
-    res.status(200).send(consentPage(authorizationId));
-  }
-});
-
-// POST /oauth/consent — handle the Approve button click server-side
-app.post('/oauth/consent', async (req: Request, res: Response) => {
-  const authorizationId = req.body?.authorization_id as string | undefined;
-
-  if (!authorizationId) {
-    res.status(400).send('Missing authorization_id');
-    return;
-  }
-
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
-
-  if (!supabaseUrl || !supabaseAnonKey) {
-    res.status(500).send('Supabase not configured');
-    return;
-  }
-
-  try {
-    const approveRes = await fetch(`${supabaseUrl}/auth/v1/oauth/authorize`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'apikey': supabaseAnonKey,
-      },
-      body: JSON.stringify({ consent: 'approve', authorization_id: authorizationId }),
-      redirect: 'manual',
-    });
-
-    // Check for redirect
-    if (approveRes.status >= 300 && approveRes.status < 400) {
-      const location = approveRes.headers.get('location');
-      if (location) {
-        res.redirect(location);
-        return;
-      }
-    }
-
-    const data = await approveRes.json() as { redirect_to?: string };
-    if (data.redirect_to) {
-      res.redirect(data.redirect_to);
-      return;
-    }
-
-    console.error('[OAuth] POST consent - no redirect from Supabase:', approveRes.status, JSON.stringify(data));
-    res.status(500).send('Authorization failed - no redirect received from Supabase');
-  } catch (err) {
-    console.error('[OAuth] POST consent failed:', err);
-    res.status(500).send('Authorization failed');
-  }
+  // Serve the consent page — supabase-js handles auth client-side
+  res.status(200).send(consentPage(authorizationId, supabaseUrl, supabaseAnonKey));
 });
 
 // ============================================================
