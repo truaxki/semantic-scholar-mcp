@@ -37,3 +37,4 @@ RUN addgroup -g 1001 -S nodejs && \
 USER nodejs
 
 CMD ["node", "dist/server.js"]
+# Cache bust 1770851526
