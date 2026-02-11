@@ -16,9 +16,12 @@ FROM node:20-alpine AS production
 
 WORKDIR /app
 
+# Install build tools needed for native modules (better-sqlite3)
+RUN apk add --no-cache python3 make g++
+
 # Install production dependencies
 COPY package*.json ./
-RUN npm ci --only=production
+RUN npm ci --only=production && apk del python3 make g++
 
 # Copy built files
 COPY --from=builder /app/dist ./dist
