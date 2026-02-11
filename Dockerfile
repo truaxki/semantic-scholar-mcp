@@ -34,9 +34,7 @@ ENV NODE_ENV=production
 ENV PORT=3100
 ENV HOST=0.0.0.0
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
+# Railway handles health checks externally — skip Docker HEALTHCHECK
 
 # Run as non-root user
 RUN addgroup -g 1001 -S nodejs && \
@@ -44,7 +42,5 @@ RUN addgroup -g 1001 -S nodejs && \
     chown -R nodejs:nodejs /app
 
 USER nodejs
-
-EXPOSE ${PORT}
 
 CMD ["node", "dist/server.js"]
