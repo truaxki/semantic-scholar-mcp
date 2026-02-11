@@ -31,3 +31,7 @@ coverage/
 
 # Docker
 .dockerignore
+cache.db
+cache.sqlite*
+dist/
+.env
