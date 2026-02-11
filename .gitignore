@@ -1,10 +1,16 @@
 # Dependencies
 node_modules/
+
+# Build output
 build/
+dist/
 
 # Cache
 cache/
+*.db
 *.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # Environment
 .env
@@ -28,10 +34,3 @@ npm-debug.log*
 # Testing
 coverage/
 .nyc_output/
-
-# Docker
-.dockerignore
-cache.db
-cache.sqlite*
-dist/
-.env
