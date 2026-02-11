@@ -75,6 +75,47 @@ export async function getReferences(apiKey: string, paperId: string, limit: numb
   return res.json();
 }
 
+export async function getAuthor(apiKey: string, authorId: string, fields: string) {
+  const res = await throttledFetch(
+    `${BASE_URL}/author/${encodeURIComponent(authorId)}?fields=${fields}`,
+    { headers: headers(apiKey) }
+  );
+  if (!res.ok) throw new Error(`S2 API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function searchAuthors(apiKey: string, query: string, limit: number = 10) {
+  const params = new URLSearchParams({
+    query,
+    fields: 'name,affiliations,citationCount,hIndex,paperCount',
+    limit: String(limit),
+  });
+  const res = await throttledFetch(`${BASE_URL}/author/search?${params}`, { headers: headers(apiKey) });
+  if (!res.ok) throw new Error(`S2 API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function getPaperWithEmbedding(apiKey: string, paperId: string) {
+  const fields = 'title,authors,year,abstract,citationCount,referenceCount,fieldsOfStudy,s2FieldsOfStudy,embedding,tldr,externalIds,publicationTypes';
+  const res = await throttledFetch(
+    `${BASE_URL}/paper/${encodeURIComponent(paperId)}?fields=${fields}`,
+    { headers: headers(apiKey) }
+  );
+  if (!res.ok) throw new Error(`S2 API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
+export async function getAuthorWithPapers(apiKey: string, authorId: string, limit: number = 100) {
+  const fields = `name,affiliations,citationCount,hIndex,paperCount,papers.title,papers.year,papers.citationCount,papers.authors,papers.fieldsOfStudy,papers.externalIds`;
+  const params = new URLSearchParams({ fields, limit: String(limit) });
+  const res = await throttledFetch(
+    `${BASE_URL}/author/${encodeURIComponent(authorId)}?${params}`,
+    { headers: headers(apiKey) }
+  );
+  if (!res.ok) throw new Error(`S2 API ${res.status}: ${await res.text()}`);
+  return res.json();
+}
+
 export async function batchFetchPapers(apiKey: string, paperIds: string[], fields: string) {
   const res = await throttledFetch(`${BASE_URL}/paper/batch?fields=${fields}`, {
     method: 'POST',

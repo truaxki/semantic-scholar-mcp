@@ -8,7 +8,7 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 import { requireBearerAuth, getOAuthMetadata } from './auth.js';
 import { supabaseOAuthEndpoints } from './supabase.js';
-import { searchPapers, getPaper, getAuthors, getCitations, getReferences, batchFetchPapers } from './semantic-scholar.js';
+import { searchPapers, getPaper, getAuthors, getCitations, getReferences, batchFetchPapers, getAuthor, searchAuthors, getPaperWithEmbedding, getAuthorWithPapers } from './semantic-scholar.js';
 import { getCachedOrFetch, getCacheStats, clearCache } from './cache.js';
 
 // Check if request is an MCP initialize request
@@ -143,6 +143,82 @@ function createServer() {
     async ({ paperIds, fields }): Promise<CallToolResult> => {
       const fieldList = fields || 'title,authors,year,abstract,citationCount';
       const raw = JSON.stringify(await batchFetchPapers(API_KEY, paperIds, fieldList));
+      return { content: [{ type: 'text', text: raw }] };
+    }
+  );
+
+  // Tool: get_author
+  server.registerTool(
+    'get_author',
+    {
+      description: 'Get details for an author by Semantic Scholar author ID.',
+      inputSchema: {
+        authorId: z.string().describe('Semantic Scholar author ID'),
+        fields: z.string().optional().describe('Comma-separated fields (default: name,affiliations,citationCount,hIndex,paperCount)'),
+      },
+    },
+    async ({ authorId, fields }): Promise<CallToolResult> => {
+      const fieldList = fields || 'name,affiliations,citationCount,hIndex,paperCount';
+      const cacheKey = `author:${authorId}:${fieldList}`;
+      const raw = await getCachedOrFetch(cacheKey, 86400, async () => {
+        return JSON.stringify(await getAuthor(API_KEY, authorId, fieldList));
+      });
+      return { content: [{ type: 'text', text: raw }] };
+    }
+  );
+
+  // Tool: search_authors
+  server.registerTool(
+    'search_authors',
+    {
+      description: 'Search for authors by name.',
+      inputSchema: {
+        query: z.string().describe('Author name to search'),
+        limit: z.number().min(1).max(100).default(10).describe('Max results'),
+      },
+    },
+    async ({ query, limit }): Promise<CallToolResult> => {
+      const cacheKey = `author-search:${query}:${limit}`;
+      const raw = await getCachedOrFetch(cacheKey, 3600, async () => {
+        return JSON.stringify(await searchAuthors(API_KEY, query, limit));
+      });
+      return { content: [{ type: 'text', text: raw }] };
+    }
+  );
+
+  // Tool: get_paper_with_embedding
+  server.registerTool(
+    'get_paper_with_embedding',
+    {
+      description: 'Get full paper details including SPECTER embedding (768-dim), TLDR, fields of study, and external IDs. Ideal for Neo4j ingestion.',
+      inputSchema: {
+        paperId: z.string().describe('Paper ID, DOI, ARXIV:id, or URL:url'),
+      },
+    },
+    async ({ paperId }): Promise<CallToolResult> => {
+      const cacheKey = `paper-embed:${paperId}`;
+      const raw = await getCachedOrFetch(cacheKey, 86400, async () => {
+        return JSON.stringify(await getPaperWithEmbedding(API_KEY, paperId));
+      });
+      return { content: [{ type: 'text', text: raw }] };
+    }
+  );
+
+  // Tool: get_author_with_papers
+  server.registerTool(
+    'get_author_with_papers',
+    {
+      description: 'Get author details plus their papers with co-authors. One call gives you the full co-authorship graph for an author. Ideal for Neo4j ingestion and author clustering.',
+      inputSchema: {
+        authorId: z.string().describe('Semantic Scholar author ID'),
+        limit: z.number().min(1).max(500).default(100).describe('Max papers to return'),
+      },
+    },
+    async ({ authorId, limit }): Promise<CallToolResult> => {
+      const cacheKey = `author-papers:${authorId}:${limit}`;
+      const raw = await getCachedOrFetch(cacheKey, 86400, async () => {
+        return JSON.stringify(await getAuthorWithPapers(API_KEY, authorId, limit));
+      });
       return { content: [{ type: 'text', text: raw }] };
     }
   );
