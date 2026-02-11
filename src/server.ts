@@ -179,12 +179,16 @@ function createServer() {
 // Parse allowed hosts
 const serverHost = new URL(SERVER_URL).host;
 const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN || process.env.RAILWAY_STATIC_URL;
-const allowedHosts = [
-  'localhost',
-  '127.0.0.1',
-  serverHost,
-  ...(railwayDomain && railwayDomain !== serverHost ? [railwayDomain] : [])
-];
+const isRailway = !!process.env.RAILWAY_ENVIRONMENT;
+const allowedHosts = isRailway
+  ? undefined  // Railway's reverse proxy handles host validation
+  : [
+      'localhost',
+      '127.0.0.1',
+      `localhost:${PORT}`,
+      serverHost,
+      ...(railwayDomain ? [railwayDomain] : []),
+    ];
 console.log('Allowed hosts:', allowedHosts);
 
 const app = createMcpExpressApp({
